@@ -9,11 +9,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .. import dispatch
+from .. import dispatch, storage
 from ..config import settings
 from ..db import get_db
 from ..models import Job, Sighting, Turtle
-from ..schemas import IdentifyIn, IdentifyOut, JobOut
+from ..schemas import IdentifyIn, IdentifyOut, JobOut, UploadIn
 from ..security import limiter, require_api_key
 
 router = APIRouter(prefix="/v1", dependencies=[Depends(require_api_key)])
@@ -64,6 +64,14 @@ def finish(j: Job, db: Session):
 @router.get("/species")
 def species():
     return {"labels": SPECIES_LABELS}
+
+
+@router.post("/uploads")
+def create_upload(body: UploadIn):
+    """Get a one-time slot to upload a photo straight to S3, then pass `key` to /identify."""
+    if not settings.S3_INCOMING_BUCKET:
+        raise HTTPException(503, "storage not configured")
+    return storage.presign_upload(body.content_type)
 
 
 @router.post("/identify", response_model=IdentifyOut)

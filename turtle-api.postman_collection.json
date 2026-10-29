@@ -63,7 +63,7 @@
         },
         {
           "name": "POST /v1/identify  (STARTS PAID GPU WORK)",
-          "description": "Starts a real Modal GPU job. Image URLs must be https and on ALLOWED_IMAGE_HOSTS. Saves job_id into the jobId variable.",
+          "description": "Runs identification on the GPU worker. Images are S3 keys from POST /v1/uploads. Saves job_id into the jobId variable.",
           "event": [{ "listen": "test", "script": { "exec": [
             "pm.test('200 success', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().success).to.eql(true); });",
             "if (pm.response.json().job_id) pm.collectionVariables.set('jobId', pm.response.json().job_id);",
@@ -78,7 +78,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"uid\": \"{{uid}}\",\n  \"images\": {\n    \"whole\": \"https://<ref>.supabase.co/storage/v1/object/public/turtle-images/test/whole.jpg\",\n    \"left\": \"https://<ref>.supabase.co/storage/v1/object/public/turtle-images/test/left.jpg\",\n    \"right\": \"\"\n  }\n}"
+              "raw": "{\n  \"uid\": \"{{uid}}\",\n  \"images\": {\n    \"whole\": \"incoming/test/whole.jpg\",\n    \"left\": \"incoming/test/left.jpg\",\n    \"right\": \"incoming/test/right.jpg\"\n  }\n}"
             },
             "url": "{{baseUrl}}/v1/identify"
           }

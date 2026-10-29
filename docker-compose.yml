@@ -1,15 +1,18 @@
-# Phase 1: everything on one GPU VM.
-#   cp .env.example .env   (set API_KEYS, ADMIN_KEYS, ALLOWED_IMAGE_HOSTS)
+# Phase 1: API + GPU worker on one G4 VM. Data lives in AWS: RDS (Postgres+pgvector) and S3.
+#   cp .env.example .env     (DATABASE_URL -> RDS, S3_INCOMING_BUCKET, S3_ACCEPTED_BUCKET, AWS_REGION, API_KEYS, ADMIN_KEYS)
 #   docker compose up -d --build
-#   curl localhost:8000/health
-x-db-url: &db-url postgresql://turtle:${POSTGRES_PASSWORD:-turtle}@db:5432/turtle
+# AWS credentials come from the VM's IAM instance profile; do not put access keys in .env.
+#
+# No RDS yet? Run a throwaway local Postgres instead:
+#   DATABASE_URL=postgresql://turtle:turtle@db:5432/turtle docker compose --profile localdb up -d --build
 
 services:
   db:
+    profiles: ["localdb"]
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: turtle
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-turtle}
+      POSTGRES_PASSWORD: turtle
       POSTGRES_DB: turtle
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -17,22 +20,19 @@ services:
       test: ["CMD-SHELL", "pg_isready -U turtle -d turtle"]
       interval: 5s
       retries: 10
-    restart: unless-stopped
 
   migrate:
     build: .
     command: ["alembic", "upgrade", "head"]
     environment:
-      DATABASE_URL: *db-url
-    depends_on:
-      db: {condition: service_healthy}
-    restart: "no"
+      DATABASE_URL: ${DATABASE_URL}
+    restart: on-failure       # retries while the database is still coming up
 
   api:
     build: .
     env_file: .env
     environment:
-      DATABASE_URL: *db-url
+      DATABASE_URL: ${DATABASE_URL}
       WORKER_URL: http://worker:9000
     ports:
       - "8000:8000"
@@ -44,8 +44,14 @@ services:
   worker:
     build: ./worker
     environment:
-      DATABASE_URL: *db-url
+      DATABASE_URL: ${DATABASE_URL}
+      S3_INCOMING_BUCKET: ${S3_INCOMING_BUCKET}
+      S3_INCOMING_PREFIX: ${S3_INCOMING_PREFIX:-incoming/}
+      S3_ACCEPTED_BUCKET: ${S3_ACCEPTED_BUCKET}
+      S3_ACCEPTED_PREFIX: ${S3_ACCEPTED_PREFIX:-accepted/}
+      AWS_REGION: ${AWS_REGION:-ap-south-1}
       WORKER_CONCURRENCY: "4"
+      REQUIRED_SLOTS: ${REQUIRED_SLOTS:-whole,left,right}
     volumes:
       - models:/models          # model weights are cached here across restarts
     deploy:

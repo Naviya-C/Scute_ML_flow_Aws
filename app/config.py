@@ -18,13 +18,20 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     ENV: str = "development"                # development | production
-    DATABASE_URL: str                       # Supabase transaction pooler (port 6543)
+    DATABASE_URL: str                       # RDS PostgreSQL (needs ?sslmode=require)
 
     API_KEYS: Csv = Field(default_factory=list)    # server-to-server keys for the frontend backend
     ADMIN_KEYS: Csv = Field(default_factory=list)
     CORS_ORIGINS: Csv = Field(default_factory=list)
-    ALLOWED_IMAGE_HOSTS: Csv = Field(default_factory=list)
+    REQUIRED_SLOTS: Csv = Field(default_factory=lambda: ["whole", "left", "right"])  # must be in every submission
 
+    # Uploads land in quarantine (incoming), the worker moves validated images to accepted.
+    # Same bucket with two prefixes now; point them at two buckets later without code changes.
+    S3_INCOMING_BUCKET: str = ""
+    S3_INCOMING_PREFIX: str = "incoming/"
+    S3_ACCEPTED_BUCKET: str = ""
+    S3_ACCEPTED_PREFIX: str = "accepted/"
+    AWS_REGION: str = "ap-south-1"
     WORKER_URL: str = "http://worker:9000"  # GPU worker (compose service name; k8s Service later)
 
     ENABLE_DOCS: bool = True                # /docs and /openapi.json
@@ -33,8 +40,7 @@ class Settings(BaseSettings):
     MAX_BODY_BYTES: int = 32_768
     IDENTIFY_WAIT_SECONDS: int = 240        # POST /v1/identify waits this long for the result (GPU cold start ~1-2 min)
 
-    _split = field_validator("API_KEYS", "ADMIN_KEYS", "CORS_ORIGINS", "ALLOWED_IMAGE_HOSTS",
-                             mode="before")(_csv)
+    _split = field_validator("API_KEYS", "ADMIN_KEYS", "CORS_ORIGINS", "REQUIRED_SLOTS", mode="before")(_csv)
 
     @property
     def sqlalchemy_url(self) -> str:
@@ -58,8 +64,8 @@ class Settings(BaseSettings):
                 problems.append("ADMIN_KEYS is empty")
             if any(len(k) < 32 for k in self.API_KEYS + self.ADMIN_KEYS):
                 problems.append("API/admin keys must be at least 32 characters")
-            if not self.ALLOWED_IMAGE_HOSTS:
-                problems.append("ALLOWED_IMAGE_HOSTS is empty")
+            if not (self.S3_INCOMING_BUCKET and self.S3_ACCEPTED_BUCKET):
+                problems.append("S3_INCOMING_BUCKET / S3_ACCEPTED_BUCKET is empty")
             if "*" in self.CORS_ORIGINS:
                 problems.append("CORS_ORIGINS must not be '*' in production")
             if problems:

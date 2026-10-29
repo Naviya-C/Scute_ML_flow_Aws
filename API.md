@@ -10,8 +10,9 @@ All bodies are JSON.
 ## The flow
 
 ```
-1. Frontend uploads the user's photos to Supabase Storage (as it does today)
-2. POST /v1/identify  { uid, images: { whole, left, right, front, shell, rear } }
+1. For each photo: POST /v1/uploads { content_type } -> { key, url, fields }
+   then the browser POSTs the file (multipart: fields + file) straight to S3 `url`
+2. POST /v1/identify  { uid, images: { whole, left, right, front, shell, rear } }   (values = the `key`s)
    -> waits for the models, then returns the result in the same response (200)
 ```
 
@@ -20,8 +21,9 @@ cold start), so **set your HTTP client timeout to at least 5 minutes** and show 
 If processing takes longer than 4 minutes you get `504` with the `job_id`; fetch the full result
 later with `GET /v1/jobs/{job_id}`.
 
-**Image links:** https only, from your Supabase project host (`ALLOWED_IMAGE_HOSTS`). Presigned links must stay valid for at
-least 30 minutes. Allowed formats: JPEG, PNG, WebP (convert HEIC on the device).
+**Images:** private S3 objects referenced by `key` (`incoming/...`), never by URL. Upload slots from
+`POST /v1/uploads` expire after 15 minutes and accept up to 15 MB. Allowed formats: JPEG, PNG, WebP
+(convert HEIC on the device).
 
 ---
 
@@ -33,25 +35,25 @@ least 30 minutes. Allowed formats: JPEG, PNG, WebP (convert HEIC on the device).
 {
   "uid": "user-42",
   "images": {
-    "whole": "https://<ref>.supabase.co/storage/v1/object/public/turtle-images/u42/whole.jpg",
-    "left":  "https://<ref>.supabase.co/storage/v1/object/public/turtle-images/u42/left.jpg",
-    "right": "https://<ref>.supabase.co/storage/v1/object/public/turtle-images/u42/right.jpg",
-    "front": "https://<ref>.supabase.co/storage/v1/object/public/turtle-images/u42/front.jpg",
-    "shell": "https://<ref>.supabase.co/storage/v1/object/public/turtle-images/u42/shell.jpg",
+    "whole": "incoming/2026/10/whole.jpg",
+    "left":  "incoming/2026/10/left.jpg",
+    "right": "incoming/2026/10/right.jpg",
+    "front": "incoming/2026/10/front.jpg",
+    "shell": "incoming/2026/10/shell.jpg",
     "rear":  ""
   }
 }
 ```
 
 - `uid` (required): your user's id. Every job, result and webhook carries it back.
-- `images`: one Supabase Storage link per slot. Send `""` (or leave the key out) for a photo the user didn't take.
-  At least one is required. Unknown slot names are rejected.
+- `images`: one S3 object key per slot (from `POST /v1/uploads`). Send `""` (or leave the key out) for a photo the user didn't take.
+  `whole`, `left` and `right` are required; `front`, `shell` and `rear` are optional. A missing required slot returns `422`. Unknown slot names are rejected.
 
 | Slot | What to photograph | Used for |
 |---|---|---|
-| `whole` | Whole turtle | Species |
-| `left` | **Left side of the head, close-up** (face scutes visible) | Species + **individual ID** |
-| `right` | **Right side of the head, close-up** (face scutes visible) | Species + **individual ID** |
+| `whole` (required) | Whole turtle | Species |
+| `left` (required) | **Left side of the head, close-up** (face scutes visible) | Species + **individual ID** |
+| `right` (required) | **Right side of the head, close-up** (face scutes visible) | Species + **individual ID** |
 | `front` | Head from the front | Species |
 | `shell` | Shell from above | Species |
 | `rear` | Rear | Species |
@@ -83,6 +85,12 @@ Response `200` (success):
 - `turtle_id`, `status`, `confidence`: the individual identification (`status` values are listed
   under `identification.status` below). `turtle_id` and `confidence` are `null` for `skipped` and
   `insufficient_views`.
+- Every photo goes through a sea-turtle check first. If a required photo (`whole`, `left`, `right`)
+  fails, or ANY photo is not a sea turtle, the **whole request is rejected**: nothing is kept,
+  `status` is `no_sea_turtle` or `rejected`, `can_retry` is `true`, and `reason` names the photos to
+  retake. An optional photo (`front`, `shell`, `rear`) that is too blurry or too small is just dropped.
+- `species` is `"unknown"` when the photo is clearly a sea turtle but the species is unclear. The
+  individual is still identified.
 - For per-photo details (which photo was rejected and why), call `GET /v1/jobs/{job_id}`.
 
 Failure responses:
@@ -129,10 +137,10 @@ Completed example:
       "is_provisional": false
     },
     "images": [
-      { "index": 1, "slot": "left",  "view": "left_face", "usable": true,  "reason": null,         "detection_confidence": 0.97 },
-      { "index": 3, "slot": "shell", "view": "carapace",  "usable": false, "reason": "too_blurry", "detection_confidence": 0.88 }
+      { "index": 1, "slot": "left",  "view": "left_face", "usable": true,  "reason": null,         "turtle_score": 0.97 },
+      { "index": 3, "slot": "shell", "view": "carapace",  "usable": false, "reason": "too_blurry", "turtle_score": 0.88 }
     ],
-    "model_versions": { "detector": "rfdetr-v1", "species": "bioclip-2.5", "segmenter": "seg-v1", "embedder": "embed-v1" }
+    "model_versions": { "detector": "rfdetr-v1", "species": "bioclip-2", "segmenter": "none", "embedder": "dinov2-base-v1" }
   }
 }
 ```
@@ -152,12 +160,14 @@ Completed example:
 | `matched` | existing ID | "This turtle is already known: GT-000042" |
 | `new` | new ID | "New turtle registered: GT-000107" |
 | `uncertain` | provisional ID | "Possible match, pending expert review" (`is_provisional: true`) |
-| `skipped` | null | Not a green turtle, so no individual ID |
+| `skipped` | null | Leatherback: species recorded, no individual ID (no scutes) |
+| `rejected` | null | A required photo failed its checks. Ask the user to retake the photos named in `reason` |
+| `no_sea_turtle` | null | A photo is not a sea turtle. Ask the user to retake the photos named in `reason` |
 | `insufficient_views` | null | Green turtle, but no usable left/right face photo. Ask for face photos |
 
 ### `images[].reason` (when `usable` is false)
 
-`download_failed` (link broken or expired), `no_turtle_detected`, `low_detection_confidence`, `turtle_too_small`, `too_blurry`, `scutes_not_found`
+`download_failed` (file missing or not an image), `no_turtle_detected`, `not_a_sea_turtle`, `too_small`, `too_blurry`
 Use `slot` + `reason` to tell the user exactly which photo to retake.
 
 ### Failed job

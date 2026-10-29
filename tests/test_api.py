@@ -4,7 +4,7 @@ from app.db import engine
 
 from .conftest import A, H
 
-IMG = "https://xyz.supabase.co/storage/v1/object/public/turtle/u/{}.jpg"
+IMG = "incoming/2026/10/{}.jpg"
 BODY = {"uid": "user-42", "images": {"whole": IMG.format("w"), "left": IMG.format("l"),
                                      "right": IMG.format("r"), "front": "", "shell": IMG.format("s")}}
 
@@ -30,12 +30,17 @@ def test_auth_required(client):
 
 
 def test_validation(client):
+    base = {"whole": IMG.format("w"), "left": IMG.format("l"), "right": IMG.format("r")}
     bad = [
-        {"images": {"left": IMG.format("l")}},                                   # no uid
-        {"uid": "u", "images": {"left": "", "right": ""}},                       # no images
-        {"uid": "u", "images": {"tail": IMG.format("t")}},                       # unknown slot
-        {"uid": "u", "images": {"left": "http://xyz.supabase.co/storage/v1/object/public/turtle/l.jpg"}},           # not https
-        {"uid": "u", "images": {"left": "https://evil.com/l.jpg"}},              # host not allowed
+        {"images": base},                                                          # no uid
+        {"uid": "u", "images": {"left": "", "right": ""}},                         # no images
+        {"uid": "u", "images": {"whole": base["whole"], "left": base["left"]}},    # right missing
+        {"uid": "u", "images": {"left": base["left"], "right": base["right"],
+                                "shell": IMG.format("s")}},                        # whole missing
+        {"uid": "u", "images": {**base, "tail": IMG.format("t")}},                 # unknown slot
+        {"uid": "u", "images": {**base, "left": "https://evil.com/l.jpg"}},        # a URL, not a key
+        {"uid": "u", "images": {**base, "left": "models/secret.pt"}},              # outside incoming/
+        {"uid": "u", "images": {**base, "left": "incoming/../models/secret.pt"}},  # path traversal
     ]
     for b in bad:
         assert client.post("/v1/identify", json=b, headers=H).status_code == 422, b
@@ -53,7 +58,7 @@ def test_identify_flow(client):
     assert r.json() == {"success": True, "job_id": jid, "uid": "user-42",
                         "species": "green_turtle", "species_confidence": 0.94,
                         "turtle_id": "GT-000042", "status": "matched", "confidence": 0.91,
-                        "error": None}
+                        "reason": None, "can_retry": False}
     _, images, uid = client.calls[-1]
     assert uid == "user-42"
     assert [(i["slot"], i["view"]) for i in images] == [
@@ -135,6 +140,15 @@ def test_review_and_merge(client):
     assert client.post("/v1/admin/reindex", headers=A).status_code == 202
 
 
+def test_upload_slot(client, monkeypatch):
+    from app import storage
+    monkeypatch.setattr(storage, "_s3", lambda: type("S", (), {"generate_presigned_post":
+        lambda self, bucket, key, **kw: {"url": f"https://{bucket}.s3.amazonaws.com/", "fields": {"key": key}}})())
+    assert client.post("/v1/uploads", json={"content_type": "image/gif"}, headers=H).status_code == 422
+    r = client.post("/v1/uploads", json={"content_type": "image/jpeg"}, headers=H)
+    assert r.status_code == 200 and r.json()["key"].startswith("incoming/") and r.json()["key"].endswith(".jpg")
+
+
 def test_production_guards():
     import pytest
     from pydantic import ValidationError
@@ -142,4 +156,4 @@ def test_production_guards():
     from app.config import Settings
     with pytest.raises(ValidationError, match="unsafe production config"):
         Settings(ENV="production", DATABASE_URL="postgresql://x", API_KEYS="short",
-                 ADMIN_KEYS="", CORS_ORIGINS="*", ALLOWED_IMAGE_HOSTS="")
+                 ADMIN_KEYS="", CORS_ORIGINS="*", S3_INCOMING_BUCKET="")
