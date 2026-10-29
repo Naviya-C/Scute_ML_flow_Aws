@@ -9,7 +9,7 @@ This guide walks through deploying the **Turtle ID Backend** container to **AWS 
 - **Compute**: AWS ECS (Fargate - serverless container compute).
 - **Registry**: AWS Elastic Container Registry (ECR).
 - **Networking**: Application Load Balancer (ALB) terminates HTTPS and forwards to port `8000`.
-- **Database**: PostgreSQL (Supabase / AWS RDS / Aurora) with `pgvector`.
+- **Database**: PostgreSQL (AWS RDS / Aurora) with `pgvector`.
 - **Secrets Management**: AWS Secrets Manager or AWS Systems Manager (SSM) Parameter Store.
 - **Logging**: Amazon CloudWatch Logs via `awslogs` driver.
 
@@ -58,11 +58,12 @@ aws secretsmanager create-secret \
   --name "turtle-id/backend-secrets" \
   --region ${AWS_REGION} \
   --secret-string '{
-    "DATABASE_URL": "postgresql://postgres.<ref>:<PASSWORD>@aws-0-ap-south-1.pooler.supabase.com:6543/postgres?sslmode=require",
-    "MIGRATION_DATABASE_URL": "postgresql://postgres.<ref>:<PASSWORD>@aws-0-ap-south-1.pooler.supabase.com:5432/postgres?sslmode=require",
+    "DATABASE_URL": "postgresql://turtle_admin:<PASSWORD>@<instance>.rds.amazonaws.com:5432/turtle?sslmode=require",
+    "MIGRATION_DATABASE_URL": "postgresql://turtle_admin:<PASSWORD>@<instance>.rds.amazonaws.com:5432/turtle?sslmode=require",
     "API_KEYS": "your-secure-frontend-api-key-here",
     "ADMIN_KEYS": "your-secure-admin-api-key-here",
-    "ALLOWED_IMAGE_HOSTS": "https://pub-xxxx.r2.dev",
+    "S3_INCOMING_BUCKET": "your-turtle-bucket",
+    "S3_ACCEPTED_BUCKET": "your-turtle-bucket",
     "MODAL_TOKEN_ID": "ak-xxxx",
     "MODAL_TOKEN_SECRET": "as-xxxx"
   }'
@@ -76,14 +77,14 @@ Before starting the service, run database migrations. You can execute this eithe
 
 ```bash
 # Locally:
-export MIGRATION_DATABASE_URL="your-supabase-session-pooler-url"
+export MIGRATION_DATABASE_URL="your-rds-url"
 alembic upgrade head
 ```
 
 Or using Docker:
 ```bash
 docker run --rm \
-  -e MIGRATION_DATABASE_URL="your-supabase-session-pooler-url" \
+  -e MIGRATION_DATABASE_URL="your-rds-url" \
   ${IMAGE_URI} \
   alembic upgrade head
 ```
@@ -156,8 +157,8 @@ Create `task-definition.json`:
           "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:turtle-id/backend-secrets:ADMIN_KEYS::"
         },
         {
-          "name": "ALLOWED_IMAGE_HOSTS",
-          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:turtle-id/backend-secrets:ALLOWED_IMAGE_HOSTS::"
+          "name": "S3_INCOMING_BUCKET",
+          "valueFrom": "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:turtle-id/backend-secrets:S3_INCOMING_BUCKET::"
         },
         {
           "name": "MODAL_TOKEN_ID",

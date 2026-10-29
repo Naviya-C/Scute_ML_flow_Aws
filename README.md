@@ -7,7 +7,7 @@ Frontend / Client ──► AWS ALB ──► FastAPI on ECS (Fargate) ──spa
                            │                  │                                │
                            ▼                  ▼                                ▼
                  ALB Health Check         PostgreSQL                   Object Storage
-                     (/health)         (Supabase/RDS)               (R2 / S3 Turtle Crops)
+                     (/health)         (RDS)               (S3 incoming/ + accepted/)
 ```
 
 ---

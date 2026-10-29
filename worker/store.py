@@ -24,10 +24,9 @@ def nearest(conn, vec, side: str, embed_version: str):
 
 
 def new_turtle(conn, species: str, provisional: bool) -> str:
-    sp = species if species != "unknown" else "green_turtle"  # turtles.species has no 'unknown' default
     return conn.execute(
         "insert into turtles (species, status) values (%s, %s) returning id",
-        (sp, "provisional" if provisional else "confirmed")).fetchone()[0]
+        (species, "provisional" if provisional else "confirmed")).fetchone()[0]
 
 
 def save_sighting(conn, job_id: str, turtle_id, species: dict, match_status: str, conf):
@@ -40,13 +39,13 @@ def save_sighting(conn, job_id: str, turtle_id, species: dict, match_status: str
 
 
 def add_embeddings(conn, turtle_id, sighting_id, embeds: dict, embed_version, seg_version):
-    # det/scute crop keys point at the source URL until crops are saved to object storage.
-    for side, (vec, url) in embeds.items():
+    # det/scute crop keys point at the source S3 key until the crop stages write their own crops.
+    for side, (vec, key) in embeds.items():
         conn.execute(
             """insert into embeddings (turtle_id, sighting_id, side, det_crop_key, scute_crop_key,
                                        embedding, embed_model_version, seg_model_version)
                values (%s, %s, %s, %s, %s, %s, %s, %s)""",
-            (turtle_id, sighting_id, side, url, url, vec, embed_version, seg_version))
+            (turtle_id, sighting_id, side, key, key, vec, embed_version, seg_version))
 
 
 def add_review(conn, sighting_id, provisional_id: str, candidates: list):

@@ -1,6 +1,6 @@
+import re
 from datetime import datetime
 from typing import Any, Literal
-from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -17,23 +17,18 @@ SLOT_TO_VIEW = {
 }
 
 
-def _check_url(slot: str, url: str):
-    u = urlparse(url)
-    if u.scheme != "https":
-        raise ValueError(f"images.{slot}: url must be https")
-    if settings.ALLOWED_IMAGE_HOSTS:
-        host = u.hostname or ""
-        is_allowed = (
-            host in settings.ALLOWED_IMAGE_HOSTS
-            or host.endswith(".r2.cloudflarestorage.com")
-            or host.endswith(".r2.dev")
-        )
-        if not is_allowed:
-            raise ValueError(f"images.{slot}: host not allowed: {u.hostname}")
+KEY_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
+
+
+def _check_key(slot: str, key: str):
+    """Images are S3 keys in the quarantine prefix (issued by POST /v1/uploads), never URLs."""
+    prefix = settings.S3_INCOMING_PREFIX
+    if not key.startswith(prefix) or not KEY_RE.match(key) or ".." in key or "//" in key:
+        raise ValueError(f"images.{slot}: invalid key (expected {prefix}...)")
 
 
 class ImagesIn(BaseModel):
-    """One R2 link per slot. Empty string or missing = photo not taken."""
+    """One S3 object key per slot. Empty string or missing = photo not taken."""
     model_config = ConfigDict(extra="forbid")
 
     whole: str | None = Field(default=None, max_length=2048)
@@ -45,15 +40,14 @@ class ImagesIn(BaseModel):
 
     @model_validator(mode="after")
     def check(self):
-        given = 0
         for slot in SLOT_TO_VIEW:
-            url = (getattr(self, slot) or "").strip()
-            setattr(self, slot, url or None)
-            if url:
-                _check_url(slot, url)
-                given += 1
-        if given == 0:
-            raise ValueError("at least one image is required")
+            key = (getattr(self, slot) or "").strip()
+            setattr(self, slot, key or None)
+            if key:
+                _check_key(slot, key)
+        missing = [s for s in settings.REQUIRED_SLOTS if not getattr(self, s, None)]
+        if missing:
+            raise ValueError("required images missing: " + ", ".join(missing))
         return self
 
 
@@ -63,10 +57,14 @@ class IdentifyIn(BaseModel):
 
     def to_pipeline(self) -> list[dict]:
         return [
-            {"slot": slot, "view": view, "url": getattr(self.images, slot)}
+            {"slot": slot, "view": view, "key": getattr(self.images, slot)}
             for slot, view in SLOT_TO_VIEW.items()
             if getattr(self.images, slot)
         ]
+
+
+class UploadIn(BaseModel):
+    content_type: Literal["image/jpeg", "image/png", "image/webp"]
 
 
 class IdentifyOut(BaseModel):
