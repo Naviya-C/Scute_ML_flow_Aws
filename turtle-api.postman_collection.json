@@ -1,0 +1,118 @@
+{
+  "info": {
+    "name": "Sea Turtle ID API",
+    "description": "Set the collection variables baseUrl, apiKey and adminKey (Variables tab) before sending. Keep keys in the Current value column so they are not synced or exported.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://YOUR-SERVICE.onrender.com" },
+    { "key": "apiKey", "value": "" },
+    { "key": "adminKey", "value": "" },
+    { "key": "uid", "value": "postman-test" },
+    { "key": "jobId", "value": "" },
+    { "key": "turtleId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "1. Health (no key)",
+      "item": [
+        {
+          "name": "GET /health",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200 ok', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().ok).to.eql(true); });"
+          ] } }],
+          "request": { "method": "GET", "url": "{{baseUrl}}/health" }
+        },
+        {
+          "name": "GET /ready (checks database)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200 ok', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().ok).to.eql(true); });"
+          ] } }],
+          "request": { "method": "GET", "url": "{{baseUrl}}/ready" }
+        }
+      ]
+    },
+    {
+      "name": "2. Public (X-API-Key)",
+      "item": [
+        {
+          "name": "GET /v1/species",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200 with labels', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().labels).to.be.an('array'); });"
+          ] } }],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{apiKey}}" }],
+            "url": "{{baseUrl}}/v1/species"
+          }
+        },
+        {
+          "name": "GET /v1/species WITHOUT key (expect 401)",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('401 without key', () => pm.response.to.have.status(401));"
+          ] } }],
+          "request": { "method": "GET", "url": "{{baseUrl}}/v1/species" }
+        },
+        {
+          "name": "GET /v1/users/{uid}/jobs",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{apiKey}}" }],
+            "url": "{{baseUrl}}/v1/users/{{uid}}/jobs?limit=20"
+          }
+        },
+        {
+          "name": "POST /v1/identify  (STARTS PAID GPU WORK)",
+          "description": "Starts a real Modal GPU job. Image URLs must be https and on ALLOWED_IMAGE_HOSTS. Saves job_id into the jobId variable.",
+          "event": [{ "listen": "test", "script": { "exec": [
+            "pm.test('200 success', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().success).to.eql(true); });",
+            "if (pm.response.json().job_id) pm.collectionVariables.set('jobId', pm.response.json().job_id);",
+            "if (pm.response.json().turtle_id) pm.collectionVariables.set('turtleId', pm.response.json().turtle_id);"
+          ] } }],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-API-Key", "value": "{{apiKey}}" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "{{$guid}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"uid\": \"{{uid}}\",\n  \"images\": {\n    \"whole\": \"https://pub-xxxx.r2.dev/test/whole.jpg\",\n    \"left\": \"https://pub-xxxx.r2.dev/test/left.jpg\",\n    \"right\": \"\"\n  }\n}"
+            },
+            "url": "{{baseUrl}}/v1/identify"
+          }
+        },
+        {
+          "name": "GET /v1/jobs/{jobId}",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{apiKey}}" }],
+            "url": "{{baseUrl}}/v1/jobs/{{jobId}}"
+          }
+        },
+        {
+          "name": "GET /v1/turtles/{turtleId}",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{apiKey}}" }],
+            "url": "{{baseUrl}}/v1/turtles/{{turtleId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Admin (X-Admin-Key)",
+      "item": [
+        {
+          "name": "GET /v1/admin/review",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-Admin-Key", "value": "{{adminKey}}" }],
+            "url": "{{baseUrl}}/v1/admin/review"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+# Phase 1: everything on one GPU VM.
+#   cp .env.example .env   (set API_KEYS, ADMIN_KEYS, ALLOWED_IMAGE_HOSTS)
+#   docker compose up -d --build
+#   curl localhost:8000/health
+x-db-url: &db-url postgresql://turtle:${POSTGRES_PASSWORD:-turtle}@db:5432/turtle
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: turtle
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-turtle}
+      POSTGRES_DB: turtle
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U turtle -d turtle"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: *db-url
+    depends_on:
+      db: {condition: service_healthy}
+    restart: "no"
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: *db-url
+      WORKER_URL: http://worker:9000
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      worker: {condition: service_healthy}
+    restart: unless-stopped
+
+  worker:
+    build: ./worker
+    environment:
+      DATABASE_URL: *db-url
+      WORKER_CONCURRENCY: "4"
+    volumes:
+      - models:/models          # model weights are cached here across restarts
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  models:
