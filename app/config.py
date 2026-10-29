@@ -25,8 +25,7 @@ class Settings(BaseSettings):
     CORS_ORIGINS: Csv = Field(default_factory=list)
     ALLOWED_IMAGE_HOSTS: Csv = Field(default_factory=list)
 
-    MODAL_APP: str = "turtle-pipeline"
-    MODAL_CLASS: str = "Pipeline"
+    WORKER_URL: str = "http://worker:9000"  # GPU worker (compose service name; k8s Service later)
 
     ENABLE_DOCS: bool = True                # /docs and /openapi.json
     RATE_LIMIT_PER_UID: int = 10            # identify requests per uid per minute

@@ -1,0 +1,26 @@
+# Git
+.git
+.gitignore
+
+# Environment files and credentials
+.env
+**/.env
+.env.*
+!.env.example
+
+# Virtual environments & dependencies
+.venv
+**/venv
+**/env
+
+# Python cache & bytecode
+**/__pycache__
+**/*.py[cod]
+*$py.class
+.pytest_cache
+tests
+
+# Documentation & API tools
+*.md
+turtle-api.postman_collection.json
+pytest.ini
