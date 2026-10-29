@@ -15,7 +15,7 @@ API_KEY = "k" * 40
 ADMIN_KEY = "a" * 40
 os.environ.update(
     DATABASE_URL=URL, MIGRATION_DATABASE_URL=URL, ENV="development",
-    API_KEYS=API_KEY, ADMIN_KEYS=ADMIN_KEY, ALLOWED_IMAGE_HOSTS="pub-x.r2.dev",
+    API_KEYS=API_KEY, ADMIN_KEYS=ADMIN_KEY, ALLOWED_IMAGE_HOSTS="xyz.supabase.co",
     CORS_ORIGINS="https://app.example.com", RATE_LIMIT_PER_UID="5",
 )
 

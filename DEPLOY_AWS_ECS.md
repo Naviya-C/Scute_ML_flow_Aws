@@ -62,7 +62,7 @@ aws secretsmanager create-secret \
     "MIGRATION_DATABASE_URL": "postgresql://postgres.<ref>:<PASSWORD>@aws-0-ap-south-1.pooler.supabase.com:5432/postgres?sslmode=require",
     "API_KEYS": "your-secure-frontend-api-key-here",
     "ADMIN_KEYS": "your-secure-admin-api-key-here",
-    "ALLOWED_IMAGE_HOSTS": "https://pub-xxxx.r2.dev",
+    "ALLOWED_IMAGE_HOSTS": "<ref>.supabase.co",
     "MODAL_TOKEN_ID": "ak-xxxx",
     "MODAL_TOKEN_SECRET": "as-xxxx"
   }'

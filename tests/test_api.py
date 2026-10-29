@@ -4,7 +4,7 @@ from app.db import engine
 
 from .conftest import A, H
 
-IMG = "https://pub-x.r2.dev/u/{}.jpg"
+IMG = "https://xyz.supabase.co/storage/v1/object/public/turtle/u/{}.jpg"
 BODY = {"uid": "user-42", "images": {"whole": IMG.format("w"), "left": IMG.format("l"),
                                      "right": IMG.format("r"), "front": "", "shell": IMG.format("s")}}
 
@@ -34,7 +34,7 @@ def test_validation(client):
         {"images": {"left": IMG.format("l")}},                                   # no uid
         {"uid": "u", "images": {"left": "", "right": ""}},                       # no images
         {"uid": "u", "images": {"tail": IMG.format("t")}},                       # unknown slot
-        {"uid": "u", "images": {"left": "http://pub-x.r2.dev/l.jpg"}},           # not https
+        {"uid": "u", "images": {"left": "http://xyz.supabase.co/storage/v1/object/public/turtle/l.jpg"}},           # not https
         {"uid": "u", "images": {"left": "https://evil.com/l.jpg"}},              # host not allowed
     ]
     for b in bad:

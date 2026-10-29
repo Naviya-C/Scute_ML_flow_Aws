@@ -22,18 +22,12 @@ def _check_url(slot: str, url: str):
     if u.scheme != "https":
         raise ValueError(f"images.{slot}: url must be https")
     if settings.ALLOWED_IMAGE_HOSTS:
-        host = u.hostname or ""
-        is_allowed = (
-            host in settings.ALLOWED_IMAGE_HOSTS
-            or host.endswith(".r2.cloudflarestorage.com")
-            or host.endswith(".r2.dev")
-        )
-        if not is_allowed:
+        if (u.hostname or "") not in settings.ALLOWED_IMAGE_HOSTS:
             raise ValueError(f"images.{slot}: host not allowed: {u.hostname}")
 
 
 class ImagesIn(BaseModel):
-    """One R2 link per slot. Empty string or missing = photo not taken."""
+    """One Supabase Storage link per slot. Empty string or missing = photo not taken."""
     model_config = ConfigDict(extra="forbid")
 
     whole: str | None = Field(default=None, max_length=2048)

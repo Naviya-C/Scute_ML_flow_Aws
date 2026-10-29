@@ -78,7 +78,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"uid\": \"{{uid}}\",\n  \"images\": {\n    \"whole\": \"https://pub-xxxx.r2.dev/test/whole.jpg\",\n    \"left\": \"https://pub-xxxx.r2.dev/test/left.jpg\",\n    \"right\": \"\"\n  }\n}"
+              "raw": "{\n  \"uid\": \"{{uid}}\",\n  \"images\": {\n    \"whole\": \"https://<ref>.supabase.co/storage/v1/object/public/turtle-images/test/whole.jpg\",\n    \"left\": \"https://<ref>.supabase.co/storage/v1/object/public/turtle-images/test/left.jpg\",\n    \"right\": \"\"\n  }\n}"
             },
             "url": "{{baseUrl}}/v1/identify"
           }

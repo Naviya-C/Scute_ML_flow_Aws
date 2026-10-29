@@ -10,7 +10,7 @@ All bodies are JSON.
 ## The flow
 
 ```
-1. Frontend uploads the user's photos to its own R2 (as it does today)
+1. Frontend uploads the user's photos to Supabase Storage (as it does today)
 2. POST /v1/identify  { uid, images: { whole, left, right, front, shell, rear } }
    -> waits for the models, then returns the result in the same response (200)
 ```
@@ -20,7 +20,7 @@ cold start), so **set your HTTP client timeout to at least 5 minutes** and show 
 If processing takes longer than 4 minutes you get `504` with the `job_id`; fetch the full result
 later with `GET /v1/jobs/{job_id}`.
 
-**Image links:** https only, from the agreed R2 host(s). Presigned links must stay valid for at
+**Image links:** https only, from your Supabase project host (`ALLOWED_IMAGE_HOSTS`). Presigned links must stay valid for at
 least 30 minutes. Allowed formats: JPEG, PNG, WebP (convert HEIC on the device).
 
 ---
@@ -33,18 +33,18 @@ least 30 minutes. Allowed formats: JPEG, PNG, WebP (convert HEIC on the device).
 {
   "uid": "user-42",
   "images": {
-    "whole": "https://pub-xxxx.r2.dev/u42/whole.jpg",
-    "left":  "https://pub-xxxx.r2.dev/u42/left.jpg",
-    "right": "https://pub-xxxx.r2.dev/u42/right.jpg",
-    "front": "https://pub-xxxx.r2.dev/u42/front.jpg",
-    "shell": "https://pub-xxxx.r2.dev/u42/shell.jpg",
+    "whole": "https://<ref>.supabase.co/storage/v1/object/public/turtle-images/u42/whole.jpg",
+    "left":  "https://<ref>.supabase.co/storage/v1/object/public/turtle-images/u42/left.jpg",
+    "right": "https://<ref>.supabase.co/storage/v1/object/public/turtle-images/u42/right.jpg",
+    "front": "https://<ref>.supabase.co/storage/v1/object/public/turtle-images/u42/front.jpg",
+    "shell": "https://<ref>.supabase.co/storage/v1/object/public/turtle-images/u42/shell.jpg",
     "rear":  ""
   }
 }
 ```
 
 - `uid` (required): your user's id. Every job, result and webhook carries it back.
-- `images`: one R2 link per slot. Send `""` (or leave the key out) for a photo the user didn't take.
+- `images`: one Supabase Storage link per slot. Send `""` (or leave the key out) for a photo the user didn't take.
   At least one is required. Unknown slot names are rejected.
 
 | Slot | What to photograph | Used for |
