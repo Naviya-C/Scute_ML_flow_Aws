@@ -81,7 +81,7 @@ class Pipeline:
             self.model.half()
         self.bioclip = BioClip(self.device, self.gpu_lock)
         self.io = ThreadPoolExecutor(8)  # parallel S3 reads
-        self.s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "ap-south-1"))
+        self.s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "ap-southeast-2"))
 
     # ---- storage
     def fetch(self, key: str) -> Image.Image:

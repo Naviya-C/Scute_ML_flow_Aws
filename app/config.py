@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     S3_INCOMING_PREFIX: str = "incoming/"
     S3_ACCEPTED_BUCKET: str = ""
     S3_ACCEPTED_PREFIX: str = "accepted/"
-    AWS_REGION: str = "ap-south-1"
+    AWS_REGION: str = "ap-southeast-2"
     WORKER_URL: str = "http://worker:9000"  # GPU worker (compose service name; k8s Service later)
 
     ENABLE_DOCS: bool = True                # /docs and /openapi.json
