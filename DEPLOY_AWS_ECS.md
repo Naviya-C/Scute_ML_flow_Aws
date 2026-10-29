@@ -19,7 +19,7 @@ This guide walks through deploying the **Turtle ID Backend** container to **AWS 
 
 ### 1.1 Set your AWS variables
 ```bash
-export AWS_REGION="ap-south-1"               # Adjust to your AWS region
+export AWS_REGION="ap-southeast-2"               # Adjust to your AWS region
 export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 export REPO_NAME="turtle-id-backend"
 export IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPO_NAME}:latest"

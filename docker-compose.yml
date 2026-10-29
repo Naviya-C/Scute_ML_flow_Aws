@@ -41,6 +41,20 @@ services:
       worker: {condition: service_healthy}
     restart: unless-stopped
 
+  # HTTPS in front of the API. With a bare IP the certificate is self-signed (Caddy's internal CA).
+  # Swap the address in Caddyfile for a domain and Caddy gets a real Let's Encrypt certificate.
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on:
+      - api
+    restart: unless-stopped
+
   worker:
     build: ./worker
     environment:
@@ -49,7 +63,7 @@ services:
       S3_INCOMING_PREFIX: ${S3_INCOMING_PREFIX:-incoming/}
       S3_ACCEPTED_BUCKET: ${S3_ACCEPTED_BUCKET}
       S3_ACCEPTED_PREFIX: ${S3_ACCEPTED_PREFIX:-accepted/}
-      AWS_REGION: ${AWS_REGION:-ap-south-1}
+      AWS_REGION: ${AWS_REGION:-ap-southeast-2}
       WORKER_CONCURRENCY: "4"
       REQUIRED_SLOTS: ${REQUIRED_SLOTS:-whole,left,right}
     volumes:
@@ -68,3 +82,4 @@ services:
 volumes:
   pgdata:
   models:
+  caddy_data:

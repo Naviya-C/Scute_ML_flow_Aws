@@ -1,0 +1,4 @@
+16.176.24.116 {
+	tls internal
+	reverse_proxy api:8000
+}
