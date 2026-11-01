@@ -69,7 +69,8 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ${{ steps.ecr.outputs.registry }}/seaturtle/ml-worker:${{ github.sha }}
+          provenance: false
+          tags: ${{ steps.ecr.outputs.registry }}/seaturtle/ml-api:${{ github.sha }}
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=min,scope=api
       - uses: docker/build-push-action@v6
@@ -77,6 +78,7 @@ jobs:
           context: ./worker
           file: ./worker/Dockerfile
           push: true
+          provenance: false
           tags: ${{ steps.ecr.outputs.registry }}/seaturtle/ml-worker:${{ github.sha }}
           cache-from: type=gha,scope=worker
           cache-to: type=gha,mode=min,scope=worker
