@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     ENV: str = "development"                # development | production
-    DATABASE_URL: str                       # RDS PostgreSQL (needs ?sslmode=require)
+    DATABASE_URL: str                       # RDS PostgreSQL 
 
     API_KEYS: Csv = Field(default_factory=list)    # server-to-server keys for the frontend backend
     ADMIN_KEYS: Csv = Field(default_factory=list)
