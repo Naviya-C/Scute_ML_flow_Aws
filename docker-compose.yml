@@ -1,10 +1,11 @@
 # Phase 1: API + GPU worker on one G4 VM. Data lives in AWS: RDS (Postgres+pgvector) and S3.
-#   cp .env.example .env     (DATABASE_URL -> RDS, S3_INCOMING_BUCKET, S3_ACCEPTED_BUCKET, AWS_REGION, API_KEYS, ADMIN_KEYS)
-#   docker compose up -d --build
+#   cp .env.example .env     (DATABASE_URL -> RDS, S3_INCOMING_BUCKET, S3_ACCEPTED_BUCKET, AWS_REGION, API_KEYS, ADMIN_KEYS, IMAGE_TAG)
+#   aws ecr get-login-password --region ap-southeast-2 | docker login --username AWS --password-stdin 412161755472.dkr.ecr.ap-southeast-2.amazonaws.com
+#   docker compose pull && docker compose up -d      (IMAGE_TAG = a commit SHA that CI pushed to ECR)
 # AWS credentials come from the VM's IAM instance profile; do not put access keys in .env.
 #
 # No RDS yet? Run a throwaway local Postgres instead:
-#   DATABASE_URL=postgresql://turtle:turtle@db:5432/turtle docker compose --profile localdb up -d --build
+#   DATABASE_URL=postgresql://turtle:turtle@db:5432/turtle docker compose --profile localdb up -d
 
 services:
   db:
@@ -22,14 +23,14 @@ services:
       retries: 10
 
   migrate:
-    build: .
+    image: 412161755472.dkr.ecr.ap-southeast-2.amazonaws.com/seaturtle/ml-api:${IMAGE_TAG:?set IMAGE_TAG to a commit SHA pushed by CI}
     command: ["alembic", "upgrade", "head"]
     environment:
       DATABASE_URL: ${DATABASE_URL}
     restart: on-failure       # retries while the database is still coming up
 
   api:
-    build: .
+    image: 412161755472.dkr.ecr.ap-southeast-2.amazonaws.com/seaturtle/ml-api:${IMAGE_TAG:?set IMAGE_TAG to a commit SHA pushed by CI}
     env_file: .env
     environment:
       DATABASE_URL: ${DATABASE_URL}
@@ -56,7 +57,7 @@ services:
     restart: unless-stopped
 
   worker:
-    build: ./worker
+    image: 412161755472.dkr.ecr.ap-southeast-2.amazonaws.com/seaturtle/ml-worker:${IMAGE_TAG:?set IMAGE_TAG to a commit SHA pushed by CI}
     environment:
       DATABASE_URL: ${DATABASE_URL}
       S3_INCOMING_BUCKET: ${S3_INCOMING_BUCKET}
