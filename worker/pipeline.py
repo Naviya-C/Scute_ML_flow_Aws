@@ -18,11 +18,20 @@ Transport-agnostic: main.py (HTTP, phase 1) and later an SQS consumer both call 
 
 What is real vs placeholder:
   * gate (gate.py)     REAL   file checks + one BioCLIP pass: turtle or not, and species.
+  * detect()           REAL   RF-DETR Large, single class "sea_turtle" (DETECT_MODEL_PATH). Best box
+                              above DETECT_MIN_CONF, padded by DETECT_PAD, clamped -> crop; None if no box.
+  * segment()          REAL   YOLO-seg scute model on the face views (SEG_MODEL_PATH). Best mask,
+                              background set to black, cropped to the mask; no mask -> detection crop.
   * embed_batch()      REAL   DINOv2 ViT-B/14 (768-dim), the model the DB schema was built for.
-  * detect()           STUB   returns the images unchanged (never "not detected"); plug in your detector.
-  * segment()          STUB   returns the images unchanged; plug in your segmenter.
   * LightGlue re-rank  NOT YET  matching is cosine distance on embeddings only.
+detect()/segment() pass images through unchanged when their *_MODEL_PATH is unset (CI, local dev).
 Thresholds are uncalibrated defaults. Tune them on labelled data.
+
+Embedding versions: vectors of full photos, detector crops and segmented scutes must never be
+compared, and store.nearest() only compares vectors with the same embed_model_version.
+check_versions() refuses to start when EMBED_MODEL_VERSION does not match what is embedded:
+"-seg" exactly when the segmenter is on, and never the full-photo "dinov2-base-v1" once the
+detector is on.
 
 S3 lifecycle: rejected images are deleted, accepted ones are copied to accepted/ before the DB
 write and incoming/ is cleaned up after it. A crash leaves files in incoming/, which a bucket
@@ -30,8 +39,10 @@ lifecycle rule expires.
 """
 import io
 import logging
+import math
 import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import boto3
@@ -53,6 +64,13 @@ REVIEW_DIST = float(os.environ.get("REVIEW_DIST", "0.40"))  # <= this: ask a hum
 MAX_IMAGE_BYTES = 15 * 1024 * 1024
 FACE_VIEWS = ("left_face", "right_face")
 
+DETECT_MODEL_PATH = os.environ.get("DETECT_MODEL_PATH", "")
+SEG_MODEL_PATH = os.environ.get("SEG_MODEL_PATH", "")
+DETECT_MIN_CONF = float(os.environ.get("DETECT_MIN_CONF", "0.5"))
+DETECT_PAD = float(os.environ.get("DETECT_PAD", "0.10"))   # fraction of the box width/height
+SEG_MIN_CONF = float(os.environ.get("SEG_MIN_CONF", "0.25"))
+TURTLE_CLASS_ID = 0  # the detector has one class: "sea_turtle"
+
 IN_BUCKET = os.environ["S3_INCOMING_BUCKET"]
 IN_PREFIX = os.environ.get("S3_INCOMING_PREFIX", "incoming/")
 ACC_BUCKET = os.environ["S3_ACCEPTED_BUCKET"]
@@ -70,10 +88,81 @@ REASON_TEXT = {
 }
 
 
+# ---- pure helpers for detect/segment (no torch; unit-tested with fake model outputs)
+FULL_PHOTO_EMBED_VERSION = "dinov2-base-v1"  # the existing DB vectors: DINOv2 on full photos
+
+
+def check_versions(detector_on: bool, segmenter_on: bool, embed_version: str, seg_version: str) -> tuple[str, str]:
+    """Refuse configs that would store vectors of different inputs (full photo, detector crop,
+    segmented scute) under the same embed_model_version, where store.nearest() would compare them."""
+    if segmenter_on and ("-seg" not in embed_version or seg_version == "none"):
+        raise RuntimeError(f"segmenter is on, so EMBED_MODEL_VERSION must contain '-seg' and "
+                           f"SEG_MODEL_VERSION must be set (got {embed_version!r}, {seg_version!r})")
+    if not segmenter_on and ("-seg" in embed_version or seg_version != "none"):
+        raise RuntimeError(f"no SEG_MODEL_PATH: EMBED_MODEL_VERSION must not contain '-seg' and "
+                           f"SEG_MODEL_VERSION must be 'none' (got {embed_version!r}, {seg_version!r})")
+    if detector_on and embed_version == FULL_PHOTO_EMBED_VERSION:
+        raise RuntimeError(f"detector is on, so faces are embedded as crops: EMBED_MODEL_VERSION must not be "
+                           f"{FULL_PHOTO_EMBED_VERSION!r}, the full-photo version (e.g. dinov2-base-det-v1)")
+    return embed_version, seg_version
+
+
+def best_box(xyxy, conf, cls, min_conf: float, class_id: int = TURTLE_CLASS_ID):
+    """Highest-confidence box of class_id with conf >= min_conf, as (box, conf); None if none."""
+    xyxy, conf, cls = np.asarray(xyxy, dtype=float).reshape(-1, 4), np.asarray(conf), np.asarray(cls)
+    keep = np.flatnonzero((cls == class_id) & (conf >= min_conf))
+    if not keep.size:
+        return None
+    i = keep[conf[keep].argmax()]
+    return xyxy[i], float(conf[i])
+
+
+def pad_box(box, pad: float, width: int, height: int) -> tuple[int, int, int, int] | None:
+    """Grow a box by pad * its size on every side and clamp it to the image. None if nothing is left."""
+    x1, y1, x2, y2 = (float(v) for v in box)
+    dx, dy = pad * (x2 - x1), pad * (y2 - y1)
+    x1, y1 = max(0, math.floor(x1 - dx)), max(0, math.floor(y1 - dy))
+    x2, y2 = min(width, math.ceil(x2 + dx)), min(height, math.ceil(y2 + dy))
+    return (x1, y1, x2, y2) if x2 > x1 and y2 > y1 else None
+
+
+def best_mask(masks, conf):
+    """The mask with the highest confidence from an (N, H, W) stack; None if there are none."""
+    if masks is None or len(masks) == 0:
+        return None
+    return np.asarray(masks)[int(np.asarray(conf).argmax())]
+
+
+def mask_crop(img: Image.Image, mask) -> Image.Image | None:
+    """Black out everything outside the mask and crop to the mask's bounding box. None if empty."""
+    m = np.asarray(mask)
+    if m.shape != (img.height, img.width):  # masks can come back at the model's input size
+        m = np.asarray(Image.fromarray((m > 0.5).astype(np.uint8) * 255).resize(img.size, Image.NEAREST))
+    m = m > 0.5 if m.dtype != bool else m
+    if not m.any():
+        return None
+    arr = np.asarray(img.convert("RGB")).copy()
+    arr[~m] = 0
+    ys, xs = np.nonzero(m)
+    return Image.fromarray(arr[ys.min():ys.max() + 1, xs.min():xs.max() + 1])
+
+
+def _np(t) -> np.ndarray:
+    return t.cpu().numpy() if hasattr(t, "cpu") else np.asarray(t)
+
+
 class Pipeline:
+    detector = segmenter = None  # None: that stage passes images through unchanged
+    embed_version, seg_version = EMBED_VERSION, SEG_VERSION
+
     def __init__(self):
+        # fail fast, before any model loads
+        self.embed_version, self.seg_version = check_versions(bool(DETECT_MODEL_PATH), bool(SEG_MODEL_PATH),
+                                                              EMBED_VERSION, SEG_VERSION)
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.gpu_lock = threading.Lock()  # one forward pass at a time; S3 and DB stay parallel
+        self.detector = self._load_detector()
+        self.segmenter = self._load_segmenter()
         log.info("loading %s on %s", EMBED_MODEL, self.device)
         self.processor = AutoImageProcessor.from_pretrained(EMBED_MODEL)
         self.model = AutoModel.from_pretrained(EMBED_MODEL).to(self.device).eval()
@@ -82,6 +171,37 @@ class Pipeline:
         self.bioclip = BioClip(self.device, self.gpu_lock)
         self.io = ThreadPoolExecutor(8)  # parallel S3 reads
         self.s3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "ap-southeast-2"))
+        log.info("versions: embedder=%s segmenter=%s", self.embed_version, self.seg_version)
+
+    # ---- model loading (rfdetr / ultralytics are imported only when their weights are configured)
+    def _load_detector(self):
+        if not DETECT_MODEL_PATH:
+            log.warning("DETECT_MODEL_PATH not set: detect() passes images through unchanged")
+            return None
+        if not os.path.isfile(DETECT_MODEL_PATH):
+            raise FileNotFoundError(f"DETECT_MODEL_PATH={DETECT_MODEL_PATH} does not exist")
+        from rfdetr import RFDETRLarge
+        log.info("loading RF-DETR %s on %s", DETECT_MODEL_PATH, self.device)
+        m = RFDETRLarge(pretrain_weights=DETECT_MODEL_PATH, num_classes=1, device=self.device)
+        # fp16 without tracing: a traced model only accepts the batch size it was traced with
+        m.inference(compile=False, dtype=torch.float16 if self.device == "cuda" else torch.float32)
+        return m
+
+    def _load_segmenter(self):
+        if not SEG_MODEL_PATH:
+            log.warning("SEG_MODEL_PATH not set: segment() passes images through unchanged")
+            return None
+        if not os.path.isfile(SEG_MODEL_PATH):
+            raise FileNotFoundError(f"SEG_MODEL_PATH={SEG_MODEL_PATH} does not exist")
+        from ultralytics import YOLO
+        log.info("loading YOLO-seg %s on %s", SEG_MODEL_PATH, self.device)
+        m = YOLO(SEG_MODEL_PATH)
+        if m.task != "segment":
+            raise RuntimeError(f"SEG_MODEL_PATH={SEG_MODEL_PATH} is a '{m.task}' model "
+                               f"({len(m.names)} classes, e.g. {list(m.names.values())[:3]}), "
+                               f"not a segmentation model")
+        log.info("segmenter classes: %s", m.names)
+        return m
 
     # ---- storage
     def fetch(self, key: str) -> Image.Image:
@@ -101,10 +221,43 @@ class Pipeline:
 
     # ---- stages (each takes the whole submission as a batch)
     def detect(self, imgs: list[Image.Image], views: list[str]) -> list[Image.Image | None]:
-        return imgs  # TODO: batched turtle detector -> crops; None where no turtle is found
+        """One RF-DETR pass for the batch: padded crop of the best turtle box, None where there is none."""
+        if self.detector is None or not imgs:
+            return imgs
+        t = time.monotonic()
+        with self.gpu_lock:
+            dets = self.detector.predict(imgs, threshold=DETECT_MIN_CONF, include_source_image=False)
+        if not isinstance(dets, list):  # a batch of one comes back as a bare Detections
+            dets = [dets]
+        out, found = [], []
+        for img, view, d in zip(imgs, views, dets):
+            hit = best_box(d.xyxy, d.confidence, d.class_id, DETECT_MIN_CONF)
+            box = hit and pad_box(hit[0], DETECT_PAD, img.width, img.height)
+            out.append(img.crop(box) if box else None)
+            found.append(f"{view}={hit[1]:.2f}" if box else f"{view}=none")
+        log.info("detect: %d images in %.2fs [%s]", len(imgs), time.monotonic() - t, " ".join(found))
+        return out
 
     def segment(self, imgs: list[Image.Image], views: list[str]) -> list[Image.Image]:
-        return imgs  # TODO: batched scute segmentation
+        """One YOLO-seg pass over the face views: masked scute crop, or the detection crop if no mask."""
+        idx = [i for i, v in enumerate(views) if v in FACE_VIEWS]
+        if self.segmenter is None or not idx:
+            return imgs
+        t = time.monotonic()
+        with self.gpu_lock:
+            res = self.segmenter.predict([imgs[i] for i in idx], conf=SEG_MIN_CONF, retina_masks=True,
+                                         half=self.device == "cuda", device=self.device, verbose=False)
+        out, found = list(imgs), []
+        for i, r in zip(idx, res):
+            mask = None if r.masks is None else best_mask(_np(r.masks.data), _np(r.boxes.conf))
+            crop = None if mask is None else mask_crop(imgs[i], mask)
+            if crop is None:
+                log.warning("segment %s: no scute mask, using the detection crop", views[i])
+            else:
+                out[i] = crop
+            found.append(f"{views[i]}={'%dx%d' % crop.size if crop else 'none'}")
+        log.info("segment: %d faces in %.2fs [%s]", len(idx), time.monotonic() - t, " ".join(found))
+        return out
 
     @torch.inference_mode()
     def embed_batch(self, imgs: list[Image.Image]) -> np.ndarray:
@@ -173,7 +326,7 @@ class Pipeline:
     # ---- orchestration
     def identify(self, job_id: str, images: list[dict], uid: str) -> dict:
         recs, fatal = self._screen(images)
-        versions = {"species": BIOCLIP_VERSION, "embedder": EMBED_VERSION, "segmenter": SEG_VERSION}
+        versions = {"species": BIOCLIP_VERSION, "embedder": self.embed_version, "segmenter": self.seg_version}
         if fatal:
             return self._reject(job_id, recs, fatal, versions)
 
@@ -239,25 +392,25 @@ class Pipeline:
     def _match(self, conn, job_id, species, embeds) -> dict:
         best = None  # (dist, turtle_id)
         for side, (vec, _) in embeds.items():
-            hit = store.nearest(conn, vec, side, EMBED_VERSION)
+            hit = store.nearest(conn, vec, side, self.embed_version)
             if hit and (best is None or hit[1] < best[0]):
                 best = (hit[1], hit[0])
 
         if best and best[0] <= MATCH_DIST:
             tid, conf = best[1], 1 - best[0]
             sid = store.save_sighting(conn, job_id, tid, species, "matched", conf)
-            store.add_embeddings(conn, tid, sid, embeds, EMBED_VERSION, SEG_VERSION)  # grow gallery
+            store.add_embeddings(conn, tid, sid, embeds, self.embed_version, self.seg_version)  # grow gallery
             return {"status": "matched", "turtle_id": tid, "confidence": conf, "can_retry": False}
 
         if best and best[0] <= REVIEW_DIST:
             tid = store.new_turtle(conn, species["label"], provisional=True)
             sid = store.save_sighting(conn, job_id, tid, species, "uncertain", 1 - best[0])
-            store.add_embeddings(conn, tid, sid, embeds, EMBED_VERSION, SEG_VERSION)
+            store.add_embeddings(conn, tid, sid, embeds, self.embed_version, self.seg_version)
             store.add_review(conn, sid, tid, [{"turtle_id": best[1], "distance": best[0]}])
             return {"status": "review", "turtle_id": tid, "confidence": 1 - best[0],
                     "is_provisional": True, "can_retry": False}
 
         tid = store.new_turtle(conn, species["label"], provisional=False)
         sid = store.save_sighting(conn, job_id, tid, species, "new", None)
-        store.add_embeddings(conn, tid, sid, embeds, EMBED_VERSION, SEG_VERSION)
+        store.add_embeddings(conn, tid, sid, embeds, self.embed_version, self.seg_version)
         return {"status": "new", "turtle_id": tid, "confidence": None, "can_retry": False}

@@ -5,5 +5,12 @@ pgvector>=0.3,<1
 boto3>=1.34,<2
 pillow>=10,<12
 numpy<2
-transformers>=4.44,<5
+# rfdetr 1.11 needs transformers 5; 5.8+ needs torch>=2.6 but the base image has 2.4.1
+transformers==5.7.0
 open_clip_torch>=2.26,<4
+# detection (RF-DETR) and scute segmentation (YOLO-seg); versions the weights were trained/tested with
+rfdetr==1.11.2
+supervision==0.30.6
+ultralytics==8.4.14
+# last opencv release that supports numpy<2; needs libgl1 + libglib2.0-0 (Dockerfile)
+opencv-python==4.11.0.86

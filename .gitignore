@@ -44,3 +44,9 @@ task-definition.local.json
 .idea/
 .DS_Store
 Thumbs.db
+
+# Model weights: mounted into the worker at runtime (WEIGHTS_DIR), never committed or baked in
+models/
+*.pth
+*.pt
+*.onnx

@@ -67,8 +67,19 @@ services:
       AWS_REGION: ${AWS_REGION:-ap-southeast-2}
       WORKER_CONCURRENCY: "4"
       REQUIRED_SLOTS: ${REQUIRED_SLOTS:-whole,left,right}
+      # Trained weights, read from the WEIGHTS_DIR mount. Set a path to empty in .env to turn that
+      # stage off (pass-through); then EMBED_MODEL_VERSION / SEG_MODEL_VERSION must match (see .env.example).
+      DETECT_MODEL_PATH: ${DETECT_MODEL_PATH-/weights/detection_v1.pth}
+      SEG_MODEL_PATH: ${SEG_MODEL_PATH-/weights/seg-yolo26n.pt}
+      DETECT_MIN_CONF: ${DETECT_MIN_CONF:-0.5}
+      DETECT_PAD: ${DETECT_PAD:-0.10}
+      # Segmented-scute embeddings get their own version so they are never matched against the
+      # old full-photo ones (dinov2-base-v1).
+      EMBED_MODEL_VERSION: ${EMBED_MODEL_VERSION:-dinov2-base-seg-v1}
+      SEG_MODEL_VERSION: ${SEG_MODEL_VERSION:-yolo26s-seg-scute-v1}
     volumes:
-      - models:/models          # model weights are cached here across restarts
+      - models:/models          # Hugging Face models (DINOv2, BioCLIP) are cached here across restarts
+      - ${WEIGHTS_DIR:-./models}:/weights:ro   # detector + segmenter weights; never baked into the image
     deploy:
       resources:
         reservations:
