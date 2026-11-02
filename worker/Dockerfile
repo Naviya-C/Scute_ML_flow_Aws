@@ -22,7 +22,7 @@ RUN pip install -r requirements.txt
 
 COPY *.py ./
 
-RUN useradd --create-home --uid 10001 appuser && mkdir -p /models && chown -R appuser /srv /models
+RUN useradd --create-home --uid 10001 appuser && mkdir -p /models /tmp/ultralytics && chown -R appuser /srv /models /tmp/ultralytics
 USER appuser
 
 EXPOSE 9000
