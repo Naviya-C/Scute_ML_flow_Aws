@@ -6,8 +6,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     HF_HOME=/models/hf \
+    YOLO_CONFIG_DIR=/tmp/ultralytics \
+    YOLO_AUTOINSTALL=false \
+    YOLO_OFFLINE=true \
     PORT=9000
 
+# OpenCV (ultralytics) runtime libraries
+RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Model weights are NOT baked in: docker-compose mounts WEIGHTS_DIR read-only at /weights.
 WORKDIR /srv
 COPY requirements.txt .
 RUN pip install -r requirements.txt
