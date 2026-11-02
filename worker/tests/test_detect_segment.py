@@ -175,16 +175,22 @@ def test_segment_passes_through_without_model():
 
 # ---- versions
 def test_versions_segmented_needs_seg_embed_version():
-    assert check_versions(True, "dinov2-base-seg-v1", "yolo26s-seg-v1") == ("dinov2-base-seg-v1", "yolo26s-seg-v1")
+    assert check_versions(True, True, "dinov2-base-seg-v1", "yolo26s-seg-v1") == ("dinov2-base-seg-v1", "yolo26s-seg-v1")
     with pytest.raises(RuntimeError):
-        check_versions(True, "dinov2-base-v1", "yolo26s-seg-v1")     # would mix with full-photo vectors
+        check_versions(True, True, "dinov2-base-v1", "yolo26s-seg-v1")     # would mix with full-photo vectors
     with pytest.raises(RuntimeError):
-        check_versions(True, "dinov2-base-seg-v1", "none")
+        check_versions(True, True, "dinov2-base-seg-v1", "none")
 
 
-def test_versions_full_photo_must_not_claim_seg():
-    assert check_versions(False, "dinov2-base-v1", "none") == ("dinov2-base-v1", "none")
+def test_versions_without_segmenter_must_not_claim_seg():
+    assert check_versions(False, False, "dinov2-base-v1", "none") == ("dinov2-base-v1", "none")  # CI / dev
     with pytest.raises(RuntimeError):
-        check_versions(False, "dinov2-base-seg-v1", "none")
+        check_versions(False, False, "dinov2-base-seg-v1", "none")
     with pytest.raises(RuntimeError):
-        check_versions(False, "dinov2-base-v1", "yolo26s-seg-v1")
+        check_versions(False, False, "dinov2-base-v1", "yolo26s-seg-v1")
+
+
+def test_versions_detection_only_must_not_reuse_full_photo_version():
+    assert check_versions(True, False, "dinov2-base-det-v1", "none") == ("dinov2-base-det-v1", "none")
+    with pytest.raises(RuntimeError):
+        check_versions(True, False, "dinov2-base-v1", "none")              # crops vs old full photos

@@ -27,9 +27,11 @@ What is real vs placeholder:
 detect()/segment() pass images through unchanged when their *_MODEL_PATH is unset (CI, local dev).
 Thresholds are uncalibrated defaults. Tune them on labelled data.
 
-Embedding versions: vectors of segmented scutes and of full photos must never be compared, and
-store.nearest() only compares vectors with the same embed_model_version. check_versions() refuses
-to start when EMBED_MODEL_VERSION does not say whether the segmenter is on (a "-seg" version).
+Embedding versions: vectors of full photos, detector crops and segmented scutes must never be
+compared, and store.nearest() only compares vectors with the same embed_model_version.
+check_versions() refuses to start when EMBED_MODEL_VERSION does not match what is embedded:
+"-seg" exactly when the segmenter is on, and never the full-photo "dinov2-base-v1" once the
+detector is on.
 
 S3 lifecycle: rejected images are deleted, accepted ones are copied to accepted/ before the DB
 write and incoming/ is cleaned up after it. A crash leaves files in incoming/, which a bucket
@@ -87,15 +89,21 @@ REASON_TEXT = {
 
 
 # ---- pure helpers for detect/segment (no torch; unit-tested with fake model outputs)
-def check_versions(segmenter_on: bool, embed_version: str, seg_version: str) -> tuple[str, str]:
-    """Refuse configs that would store segmented and full-photo vectors under the same label."""
+FULL_PHOTO_EMBED_VERSION = "dinov2-base-v1"  # the existing DB vectors: DINOv2 on full photos
+
+
+def check_versions(detector_on: bool, segmenter_on: bool, embed_version: str, seg_version: str) -> tuple[str, str]:
+    """Refuse configs that would store vectors of different inputs (full photo, detector crop,
+    segmented scute) under the same embed_model_version, where store.nearest() would compare them."""
     if segmenter_on and ("-seg" not in embed_version or seg_version == "none"):
         raise RuntimeError(f"segmenter is on, so EMBED_MODEL_VERSION must contain '-seg' and "
                            f"SEG_MODEL_VERSION must be set (got {embed_version!r}, {seg_version!r})")
     if not segmenter_on and ("-seg" in embed_version or seg_version != "none"):
-        raise RuntimeError(f"no SEG_MODEL_PATH, so embeddings are of full photos: EMBED_MODEL_VERSION "
-                           f"must not contain '-seg' and SEG_MODEL_VERSION must be 'none' "
-                           f"(got {embed_version!r}, {seg_version!r})")
+        raise RuntimeError(f"no SEG_MODEL_PATH: EMBED_MODEL_VERSION must not contain '-seg' and "
+                           f"SEG_MODEL_VERSION must be 'none' (got {embed_version!r}, {seg_version!r})")
+    if detector_on and embed_version == FULL_PHOTO_EMBED_VERSION:
+        raise RuntimeError(f"detector is on, so faces are embedded as crops: EMBED_MODEL_VERSION must not be "
+                           f"{FULL_PHOTO_EMBED_VERSION!r}, the full-photo version (e.g. dinov2-base-det-v1)")
     return embed_version, seg_version
 
 
@@ -149,7 +157,8 @@ class Pipeline:
 
     def __init__(self):
         # fail fast, before any model loads
-        self.embed_version, self.seg_version = check_versions(bool(SEG_MODEL_PATH), EMBED_VERSION, SEG_VERSION)
+        self.embed_version, self.seg_version = check_versions(bool(DETECT_MODEL_PATH), bool(SEG_MODEL_PATH),
+                                                              EMBED_VERSION, SEG_VERSION)
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.gpu_lock = threading.Lock()  # one forward pass at a time; S3 and DB stay parallel
         self.detector = self._load_detector()
